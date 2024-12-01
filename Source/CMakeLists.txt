@@ -120,6 +120,8 @@ set(libdevilutionx_SRCS
   engine/render/scrollrt.cpp
   engine/render/text_render.cpp
 
+  items/validation.cpp
+
   levels/crypt.cpp
   levels/drlg_l1.cpp
   levels/drlg_l2.cpp
@@ -367,6 +369,17 @@ target_link_libraries(libdevilutionx_format_int PUBLIC
   libdevilutionx_strings
 )
 
+add_devilutionx_object_library(libdevilutionx_ini
+  utils/ini.cpp
+)
+target_link_libraries(libdevilutionx_ini PUBLIC
+  fmt::fmt
+  tl
+  unordered_dense::unordered_dense
+  libdevilutionx_strings
+  libdevilutionx_utf8
+)
+
 add_library(libdevilutionx_log INTERFACE)
 target_include_directories(libdevilutionx_log INTERFACE
   ${PROJECT_SOURCE_DIR}/Source)
@@ -402,13 +415,13 @@ target_link_libraries(libdevilutionx PUBLIC
   DevilutionX::SDL
   fmt::fmt
   libsmackerdec
-  simpleini::simpleini
   tl
   unordered_dense::unordered_dense
   libdevilutionx_codec
   libdevilutionx_crawl
   libdevilutionx_format_int
   libdevilutionx_file_util
+  libdevilutionx_ini
   libdevilutionx_parse_int
   libdevilutionx_strings
   libdevilutionx_utf8

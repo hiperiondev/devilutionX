@@ -20,6 +20,7 @@
 #include "engine/point.hpp"
 #include "interfac.h"
 #include "items.h"
+#include "items/validation.h"
 #include "levels/gendung.h"
 #include "multi.h"
 #include "playerdat.hpp"
@@ -398,12 +399,7 @@ public:
 
 	void CalcScrolls();
 
-	bool CanUseItem(const Item &item) const
-	{
-		return _pStrength >= item._iMinStr
-		    && _pMagic >= item._iMinMag
-		    && _pDexterity >= item._iMinDex;
-	}
+	bool CanUseItem(const Item &item) const;
 
 	bool CanCleave()
 	{
@@ -520,9 +516,9 @@ public:
 	Point GetTargetPosition() const;
 
 	/**
-	 * @brief Check if position is in player's path.
+	 * @brief Returns the index of the given position in `walkpath`, or -1 if not found.
 	 */
-	bool IsPositionInPath(Point position);
+	int GetPositionPathIndex(Point position);
 
 	/**
 	 * @brief Says a speech line.

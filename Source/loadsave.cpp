@@ -9,9 +9,11 @@
 #include <cstdint>
 #include <cstring>
 #include <numeric>
+#include <string>
 
 #include <SDL.h>
 #include <ankerl/unordered_dense.h>
+#include <expected.hpp>
 #include <fmt/core.h>
 
 #include "automap.h"
@@ -37,6 +39,7 @@
 #include "utils/algorithm/container.hpp"
 #include "utils/endian.hpp"
 #include "utils/language.h"
+#include "utils/status_macros.hpp"
 
 namespace devilution {
 
@@ -234,6 +237,7 @@ public:
 struct MonsterConversionData {
 	int8_t monsterLevel;
 	uint16_t experience;
+	uint8_t toHit;
 	uint8_t toHitSpecial;
 };
 
@@ -579,7 +583,7 @@ void LoadPlayer(LoadHelper &file, Player &player)
 	sgGameInitInfo.nDifficulty = static_cast<_difficulty>(file.NextLE<uint32_t>());
 	player.pDamAcFlags = static_cast<ItemSpecialEffectHf>(file.NextLE<uint32_t>());
 	file.Skip(20); // Available bytes
-	CalcPlrItemVals(player, false);
+	CalcPlrInv(player, false);
 
 	player.executedSpell = player.queuedSpell; // Ensures backwards compatibility
 
@@ -675,16 +679,18 @@ void LoadMonster(LoadHelper *file, Monster &monster, MonsterConversionData *mons
 	else
 		file->Skip(2); // Skip exp - now calculated from monstdat when the monster dies
 
-	if (monster.isPlayerMinion()) // Don't skip for golems
-		monster.toHit = file->NextLE<uint8_t>();
+	if (monsterConversionData != nullptr)
+		monsterConversionData->toHit = file->NextLE<uint8_t>();
+	else if (monster.isPlayerMinion()) // Don't skip for golems
+		monster.golemToHit = file->NextLE<uint8_t>();
 	else
-		file->Skip(1); // Skip hit as it's already initialized
+		file->Skip(1); // Skip toHit - now calculated on the fly
 	monster.minDamage = file->NextLE<uint8_t>();
 	monster.maxDamage = file->NextLE<uint8_t>();
 	if (monsterConversionData != nullptr)
 		monsterConversionData->toHitSpecial = file->NextLE<uint8_t>();
 	else
-		file->Skip(1); // Skip toHitSpecial as it's already initialized
+		file->Skip(1); // Skip toHitSpecial - now calculated on the fly
 	monster.minDamageSpecial = file->NextLE<uint8_t>();
 	monster.maxDamageSpecial = file->NextLE<uint8_t>();
 	monster.armorClass = file->NextLE<uint8_t>();
@@ -969,24 +975,6 @@ bool LevelFileExists(SaveWriter &archive)
 	return archive.HasFile(szName);
 }
 
-bool IsShopPriceValid(const Item &item)
-{
-	const int boyPriceLimit = 90000;
-	if (!gbIsHellfire && (item._iCreateInfo & CF_BOY) != 0 && item._iIvalue > boyPriceLimit)
-		return false;
-
-	const int premiumPriceLimit = 140000;
-	if (!gbIsHellfire && (item._iCreateInfo & CF_SMITHPREMIUM) != 0 && item._iIvalue > premiumPriceLimit)
-		return false;
-
-	const uint16_t smithOrWitch = CF_SMITH | CF_WITCH;
-	const int smithAndWitchPriceLimit = gbIsHellfire ? 200000 : 140000;
-	if ((item._iCreateInfo & smithOrWitch) != 0 && item._iIvalue > smithAndWitchPriceLimit)
-		return false;
-
-	return true;
-}
-
 void LoadMatchingItems(LoadHelper &file, const Player &player, const int n, Item *pItem)
 {
 	Item heroItem;
@@ -1011,10 +999,6 @@ void LoadMatchingItems(LoadHelper &file, const Player &player, const int n, Item
 				unpackedItem._iDurability = ClampDurability(unpackedItem, heroItem._iDurability);
 				unpackedItem._iMaxCharges = std::clamp<int>(heroItem._iMaxCharges, 0, unpackedItem._iMaxCharges);
 				unpackedItem._iCharges = std::clamp<int>(heroItem._iCharges, 0, unpackedItem._iMaxCharges);
-			}
-			if (!IsShopPriceValid(unpackedItem)) {
-				unpackedItem.clear();
-				continue;
 			}
 			if (gbIsHellfire) {
 				unpackedItem._iPLToHit = ClampToHit(unpackedItem, heroItem._iPLToHit); // Oil of Accuracy
@@ -1491,7 +1475,10 @@ void SaveMonster(SaveHelper *file, Monster &monster, MonsterConversionData *mons
 	else
 		file->WriteLE<uint16_t>(static_cast<uint16_t>(std::min<unsigned>(std::numeric_limits<uint16_t>::max(), monster.exp(sgGameInitInfo.nDifficulty))));
 
-	file->WriteLE<uint8_t>(static_cast<uint8_t>(std::min<uint16_t>(monster.toHit, std::numeric_limits<uint8_t>::max()))); // For backwards compatibility
+	if (monsterConversionData != nullptr)
+		file->WriteLE<uint8_t>(monsterConversionData->toHit);
+	else
+		file->WriteLE<uint8_t>(static_cast<uint8_t>(std::min<uint16_t>(monster.toHit(sgGameInitInfo.nDifficulty), std::numeric_limits<uint8_t>::max()))); // For backwards compatibility
 	file->WriteLE<uint8_t>(monster.minDamage);
 	file->WriteLE<uint8_t>(monster.maxDamage);
 	if (monsterConversionData != nullptr)
@@ -1911,7 +1898,7 @@ void SaveLevel(SaveWriter &saveWriter, LevelConversionData *levelConversionData)
 		myPlayer._pSLvlVisited[setlvlnum] = true;
 }
 
-void LoadLevel(LevelConversionData *levelConversionData)
+tl::expected<void, std::string> LoadLevel(LevelConversionData *levelConversionData)
 {
 	char szName[MaxMpqPathSize];
 	std::optional<SaveReader> archive = OpenSaveArchive(gSaveNumber);
@@ -1920,7 +1907,7 @@ void LoadLevel(LevelConversionData *levelConversionData)
 		GetPermLevelNames(szName);
 	LoadHelper file(std::move(archive), szName);
 	if (!file.IsValid())
-		app_fatal(_("Unable to open save file archive"));
+		return tl::make_unexpected(std::string(_("Unable to open save file archive")));
 
 	if (leveltype != DTYPE_TOWN) {
 		for (int j = 0; j < MAXDUNY; j++) {
@@ -1948,7 +1935,7 @@ void LoadLevel(LevelConversionData *levelConversionData)
 		}
 		if (!gbSkipSync) {
 			for (size_t i = 0; i < ActiveMonsterCount; i++)
-				SyncMonsterAnim(Monsters[ActiveMonsters[i]]);
+				RETURN_IF_ERROR(SyncMonsterAnim(Monsters[ActiveMonsters[i]]));
 		}
 		for (int &objectId : ActiveObjects)
 			objectId = file.NextLE<int8_t>();
@@ -2011,6 +1998,7 @@ void LoadLevel(LevelConversionData *levelConversionData)
 		if (player.plractive && player.isOnActiveLevel())
 			Lights[player.lightId].hasChanged = true;
 	}
+	return {};
 }
 
 const int DiabloItemSaveSize = 368;
@@ -2018,7 +2006,7 @@ const int HellfireItemSaveSize = 372;
 
 } // namespace
 
-void ConvertLevels(SaveWriter &saveWriter)
+tl::expected<void, std::string> ConvertLevels(SaveWriter &saveWriter)
 {
 	// Backup current level state
 	bool tmpSetlevel = setlevel;
@@ -2037,7 +2025,7 @@ void ConvertLevels(SaveWriter &saveWriter)
 		leveltype = GetLevelType(currlevel);
 
 		LevelConversionData levelConversionData;
-		LoadLevel(&levelConversionData);
+		RETURN_IF_ERROR(LoadLevel(&levelConversionData));
 		SaveLevel(saveWriter, &levelConversionData);
 	}
 
@@ -2057,7 +2045,7 @@ void ConvertLevels(SaveWriter &saveWriter)
 			continue;
 
 		LevelConversionData levelConversionData;
-		LoadLevel(&levelConversionData);
+		RETURN_IF_ERROR(LoadLevel(&levelConversionData));
 		SaveLevel(saveWriter, &levelConversionData);
 	}
 
@@ -2068,6 +2056,7 @@ void ConvertLevels(SaveWriter &saveWriter)
 	setlvlnum = tmpSetlvlnum;
 	currlevel = tmpCurrlevel;
 	leveltype = tmpLeveltype;
+	return {};
 }
 
 void RemoveInvalidItem(Item &item)
@@ -2349,16 +2338,18 @@ void RemoveEmptyInventory(Player &player)
 	}
 }
 
-void LoadGame(bool firstflag)
+tl::expected<void, std::string> LoadGame(bool firstflag)
 {
 	FreeGameMem();
 
 	LoadHelper file(OpenSaveArchive(gSaveNumber), "game");
-	if (!file.IsValid())
-		app_fatal(_("Unable to open save file archive"));
+	if (!file.IsValid()) {
+		return tl::make_unexpected(std::string(_("Unable to open save file archive")));
+	}
 
-	if (!IsHeaderValid(file.NextLE<uint32_t>()))
-		app_fatal(_("Invalid save file"));
+	if (!IsHeaderValid(file.NextLE<uint32_t>())) {
+		return tl::make_unexpected(std::string(_("Invalid save file")));
+	}
 
 	if (gbIsHellfireSaveGame) {
 		giNumberOfLevels = 25;
@@ -2388,8 +2379,9 @@ void LoadGame(bool firstflag)
 	int tmpNummissiles = file.NextBE<int32_t>();
 	int tmpNobjects = file.NextBE<int32_t>();
 
-	if (!gbIsHellfire && IsAnyOf(leveltype, DTYPE_NEST, DTYPE_CRYPT))
-		app_fatal(_("Player is on a Hellfire only level"));
+	if (!gbIsHellfire && IsAnyOf(leveltype, DTYPE_NEST, DTYPE_CRYPT)) {
+		return tl::make_unexpected(std::string(_("Player is on a Hellfire only level")));
+	}
 
 	for (uint8_t i = 0; i < giNumberOfLevels; i++) {
 		DungeonSeeds[i] = file.NextBE<uint32_t>();
@@ -2411,11 +2403,11 @@ void LoadGame(bool firstflag)
 		LoadPortal(&file, i);
 
 	if (gbIsHellfireSaveGame != gbIsHellfire) {
-		pfile_convert_levels();
+		RETURN_IF_ERROR(pfile_convert_levels());
 		RemoveEmptyInventory(myPlayer);
 	}
 
-	LoadGameLevel(firstflag, ENTRY_LOAD);
+	RETURN_IF_ERROR(LoadGameLevel(firstflag, ENTRY_LOAD));
 	SetPlrAnims(myPlayer);
 	SyncPlrAnim(myPlayer);
 
@@ -2444,7 +2436,7 @@ void LoadGame(bool firstflag)
 		// For petrified monsters, the data in missile.var1 must be used to
 		// load the appropriate animation data for the monster in missile.var2
 		for (size_t i = 0; i < ActiveMonsterCount; i++)
-			SyncMonsterAnim(Monsters[ActiveMonsters[i]]);
+			RETURN_IF_ERROR(SyncMonsterAnim(Monsters[ActiveMonsters[i]]));
 		for (int &objectId : ActiveObjects)
 			objectId = file.NextLE<int8_t>();
 		for (int &objectId : AvailableObjects)
@@ -2552,7 +2544,6 @@ void LoadGame(bool firstflag)
 
 	SetUpMissileAnimationData();
 	RedoMissileFlags();
-	NewCursor(CURSOR_HAND);
 	gbProcessPlayers = IsDiabloAlive(!firstflag);
 
 	if (gbIsHellfireSaveGame != gbIsHellfire) {
@@ -2560,6 +2551,7 @@ void LoadGame(bool firstflag)
 	}
 
 	gbIsHellfireSaveGame = gbIsHellfire;
+	return {};
 }
 
 void SaveHeroItems(SaveWriter &saveWriter, Player &player)
@@ -2811,9 +2803,9 @@ void SaveLevel(SaveWriter &saveWriter)
 	SaveLevel(saveWriter, nullptr);
 }
 
-void LoadLevel()
+tl::expected<void, std::string> LoadLevel()
 {
-	LoadLevel(nullptr);
+	return LoadLevel(nullptr);
 }
 
 } // namespace devilution

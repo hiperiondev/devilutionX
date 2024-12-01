@@ -445,7 +445,7 @@ void CheckMissileCol(Missile &missile, DamageType damageType, int minDamage, int
 				isPlayerHit = PlayerMHit(*player, &monster, missile._midist, minDamage, maxDamage, missile._mitype, damageType, isDamageShifted, DeathReason::MonsterOrTrap, &blocked);
 			}
 		} else {
-			DeathReason deathReason = (!missile.IsTrap() && (missile._miAnimType == MissileGraphicID::FireWall || missile._miAnimType == MissileGraphicID::Lightning)) ? DeathReason::Player : DeathReason::MonsterOrTrap;
+			DeathReason deathReason = missile.sourceType() == MissileSource::Player ? DeathReason::Player : DeathReason::MonsterOrTrap;
 			isPlayerHit = PlayerMHit(*player, nullptr, missile._midist, minDamage, maxDamage, missile._mitype, damageType, isDamageShifted, deathReason, &blocked);
 		}
 	}
@@ -1003,7 +1003,7 @@ bool PlayerMHit(Player &player, Monster *monster, int dist, int mind, int maxd, 
 	if (missileData.isArrow()) {
 		int tac = player.GetArmor();
 		if (monster != nullptr) {
-			hper = monster->toHit
+			hper = monster->toHit(sgGameInitInfo.nDifficulty)
 			    + ((monster->level(sgGameInitInfo.nDifficulty) - player.getCharacterLevel()) * 2)
 			    + 30
 			    - (dist * 2) - tac;

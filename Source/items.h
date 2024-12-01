@@ -29,6 +29,11 @@ namespace devilution {
 // Item indestructible durability
 #define DUR_INDESTRUCTIBLE 255
 
+constexpr int MaxVendorValue = 140000;
+constexpr int MaxVendorValueHf = 200000;
+constexpr int MaxBoyValue = 90000;
+constexpr int MaxBoyValueHf = 200000;
+
 enum item_quality : uint8_t {
 	ITEM_QUALITY_NORMAL,
 	ITEM_QUALITY_MAGIC,
@@ -487,6 +492,7 @@ extern DVL_API_FOR_TEST bool UniqueItemFlags[128];
 uint8_t GetOutlineColor(const Item &item, bool checkReq);
 bool IsItemAvailable(int i);
 bool IsUniqueAvailable(int i);
+void ClearUniqueItemFlags();
 void InitItemGFX();
 void InitItems();
 void CalcPlrItemVals(Player &player, bool Loadgfx);
